@@ -55,8 +55,8 @@ Server::Server() {
 
 }
 
-Server::~Server() { 
-    WSACleanup(); 
+Server::~Server() {
+    WSACleanup();
 }
 
 template<typename T>
@@ -103,6 +103,7 @@ void Server::receive_configuration(SOCKET socket, std::vector<size_t>& configura
 }
 
 bool Server::ping_pong(SOCKET socket) {
+    std::cout << "Waiting for PING\n";
     if (this->receive_command(socket, "PING")) {
         this->send_command(socket, "PONG");
         std::cout << "Received PING. PONG sent." << std::endl;
@@ -116,6 +117,7 @@ bool Server::ping_pong(SOCKET socket) {
 
 void Server::handle_client(SOCKET socket, bool& done) {
     while (true) {
+        bool sent = false;
         std::this_thread::sleep_for(std::chrono::seconds(1));
         if (!ping_pong(socket)) {
             break;
@@ -130,14 +132,35 @@ void Server::handle_client(SOCKET socket, bool& done) {
         this->receive_matrix(socket, matrix, configuration[0]);
 
         std::this_thread::sleep_for(std::chrono::seconds(1));
-        if (this->receive_command(socket, "START")) {
-            foo(matrix, configuration[2]);
+        if (this->receive_command(socket, "START"));
+        std::thread worker([&]() {
+            foo(matrix, configuration[2]); 
             std::this_thread::sleep_for(std::chrono::seconds(5));
             done = true;
+            });
+        
+        while (!sent) {
+            if (this->receive_command(socket, "STATUS")) {
+                if (done) {
+                    this->send_command(socket, "1");
+                    sent = true;
+                    
+                }
+                else {
+                    this->send_command(socket, "0");
+                }
+            }
         }
 
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        this->send_matrix(socket, matrix);
+
+        worker.join();
+        if (this->receive_command(socket, "GET"))
+            this->send_matrix(socket, matrix);
+            
+        
+
+        //std::this_thread::sleep_for(std::chrono::seconds(1));
+        
 
         //f = [&status]() {status = false; };
         //this->receive_command(socket, "SHUTDOWN", f);
