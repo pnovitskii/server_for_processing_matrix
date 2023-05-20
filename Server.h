@@ -7,6 +7,8 @@
 #include <thread>
 #include <functional>
 #include "Parallel_matrix_processing.h"
+#include <time.h>
+#include <cstdlib>
 
 template <typename T>
 using Matrix = std::vector<std::vector<T>>;
@@ -115,11 +117,21 @@ bool Server::ping_pong(SOCKET socket) {
     }
 }
 
+/*
+* My protocol:
+* 1. Ping/Pong session
+* 2. Configuration -> server receives and waits for data
+* 3. Data (matrix) -> server receives and waits for START command
+* 4. START command -> server starts computing
+* 5. STATUS command -> server receives command and sends current status ->
+*    -> client receives status "1" (done) and sends GET command
+* 6. GET command -> server sends data (matrix)
+*/
+
 void Server::handle_client(SOCKET socket) {
     std::thread worker; // Объявление внешней области видимости
 
     while (true) {
-        bool sent = false;
         std::this_thread::sleep_for(std::chrono::seconds(1));
         if (!ping_pong(socket)) {
             break;
@@ -139,9 +151,10 @@ void Server::handle_client(SOCKET socket) {
         std::future<decltype(matrix)> f = p.get_future();
 
         if (this->receive_command(socket, "START")) {
-            worker = std::thread([&]() { // Присваивание внешней переменной
+            worker = std::thread([&]() { 
                 foo(matrix, configuration[2]);
-                std::this_thread::sleep_for(std::chrono::seconds(5));
+                srand(time(0));
+                std::this_thread::sleep_for(std::chrono::seconds(rand() % 7 + 4));
                 //done = true;
                 p.set_value(matrix);
                 });
@@ -149,13 +162,18 @@ void Server::handle_client(SOCKET socket) {
 
         
 
-        while (!sent) {
+        while (true) {
             
             if (this->receive_command(socket, "STATUS")) {
                 std::future_status status = f.wait_for(std::chrono::seconds(1));
                 if (status == std::future_status::ready) {
-                    this->send_command(socket, "1");
-                    sent = true;
+                    while (true) {
+                        this->send_command(socket, "1");
+                        if (this->receive_command(socket, "GET")) {
+                            break;
+                        }
+                    }
+                    break;
                 }
                 else {
                     this->send_command(socket, "0");
@@ -163,9 +181,8 @@ void Server::handle_client(SOCKET socket) {
             }
         }
 
-        worker.join(); // Теперь worker доступен для join() за пределами блока if
-        if (this->receive_command(socket, "GET"))
-            this->send_matrix(socket, matrix);
+        worker.join(); 
+        this->send_matrix(socket, matrix);   
     }
     closesocket(socket);
 }
