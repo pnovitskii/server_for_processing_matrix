@@ -31,7 +31,7 @@ public:
 
     void receive_configuration(SOCKET socket, std::vector<size_t>& configuration);
     bool ping_pong(SOCKET socket);
-    void handle_client(SOCKET socket, bool& done);
+    void handle_client(SOCKET socket);
     void routine();
     bool receive_command(SOCKET socket, std::string desired_command, std::string& buf);
     bool receive_command(SOCKET socket, std::string desired_command);
@@ -115,7 +115,9 @@ bool Server::ping_pong(SOCKET socket) {
     }
 }
 
-void Server::handle_client(SOCKET socket, bool& done) {
+void Server::handle_client(SOCKET socket) {
+    std::thread worker; // Объявление внешней области видимости
+
     while (true) {
         bool sent = false;
         std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -132,19 +134,28 @@ void Server::handle_client(SOCKET socket, bool& done) {
         this->receive_matrix(socket, matrix, configuration[0]);
 
         std::this_thread::sleep_for(std::chrono::seconds(1));
-        if (this->receive_command(socket, "START"));
-        std::thread worker([&]() {
-            foo(matrix, configuration[2]); 
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-            done = true;
-            });
+
+        std::promise<decltype(matrix)> p;
+        std::future<decltype(matrix)> f = p.get_future();
+
+        if (this->receive_command(socket, "START")) {
+            worker = std::thread([&]() { // Присваивание внешней переменной
+                foo(matrix, configuration[2]);
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+                //done = true;
+                p.set_value(matrix);
+                });
+        }
+
         
+
         while (!sent) {
+            
             if (this->receive_command(socket, "STATUS")) {
-                if (done) {
+                std::future_status status = f.wait_for(std::chrono::seconds(1));
+                if (status == std::future_status::ready) {
                     this->send_command(socket, "1");
                     sent = true;
-                    
                 }
                 else {
                     this->send_command(socket, "0");
@@ -152,21 +163,14 @@ void Server::handle_client(SOCKET socket, bool& done) {
             }
         }
 
-
-        worker.join();
+        worker.join(); // Теперь worker доступен для join() за пределами блока if
         if (this->receive_command(socket, "GET"))
             this->send_matrix(socket, matrix);
-            
-        
-
-        //std::this_thread::sleep_for(std::chrono::seconds(1));
-        
-
-        //f = [&status]() {status = false; };
-        //this->receive_command(socket, "SHUTDOWN", f);
     }
     closesocket(socket);
 }
+
+
 
 void Server::routine() {
     while (work) {
@@ -176,8 +180,8 @@ void Server::routine() {
             std::cerr << "Failed to accept client socket: " << WSAGetLastError() << std::endl;
             continue;
         }
-        bool done = false;
-        std::thread client_thread(&Server::handle_client, this, newConnection, std::ref(done));
+        //bool done = false;
+        std::thread client_thread(&Server::handle_client, this, newConnection);
         client_thread.detach();
     }
 }
